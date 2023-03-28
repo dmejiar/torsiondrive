@@ -181,6 +181,123 @@ class EngineOpenMM(QMEngine):
                  'input.pdb --openmm input.xml constraints.txt',
                  input_files=['input.xml', 'input.pdb', 'constraints.txt'],
                  output_files=['tdrive.log', 'tdrive.xyz', 'qdata.txt'])
+        return
+
+class EngineNWChem(QMEngine):
+    def load_input(self, input_file):
+        """ Load a NWChem input file as a Molecule object into self.M
+        """
+        coords = []
+        elems  = []
+        reading_molecule, found_geo, zcoord = False, False, False
+        nwchem_temp = []
+        with open(input_file) as nwchemin:
+            for line in nwchemin:
+                line_sl = line.strup().lower()
+                if line_sl.startswith("geometry"):
+                    reading_molecule = True
+                    nwchem_temp.append(line)
+                elif reading_molecule:
+                    ls = line.split()
+                    if len(ls) == 4 and check_all_float(ls[1:]):
+                        if not found_geo:
+                            found_geo = True
+                            nwchem_temp.append("$!geometry@here")
+                        elems.append(ls[0])
+                        coords.append(ls[1:])
+                    else:
+                        nwchem_temp.append(line)
+                        if line_sl.startswith("zcoord"):
+                            zcoord = True
+                        if line_sl.startswith("end"):
+                            if zcoord:
+                                zcoord = False
+                            else:
+                                reading_molecule = False
+                                nwchem_temp.append("$!constraint@here")
+                else:
+                    nwchem_temp.append(line)
+                if "gradient" in line_sl:
+                    seld.temp_type = "gradient"
+                elif "optimize" in line_sl:
+                    self.temp_type = "optimize"
+        assert found_geo, f"XYZ geometry not found in molecule block of {input_file} input_file" 
+        if self.native_opt:
+            assert self.temp_type == "optimize", "input_file should contain optimize task to use native opt"
+        else:
+            assert self.temp_type == "gradient", "input_file should contain gradient task to use geomeTRIC"
+        self.nwchem_temp = nwchem_temp
+        self.M = Molecule()
+        self.M.elem = elems
+        self.M.xyzs = [np.array(coords, dtype=float)]
+        self.M.build_topology()
+        return
+
+    def write_input(self,filename="nwchem.nw"):
+        assert hasattr(self, "nwchem_temp"), "nwchem_temp not found, call self.load_input() first"
+        with open(filename,"w") as outfile:
+            for line in self.nwchem_temp:
+                if line == "$!geometry@here":
+                    for e,c in zip(self.M.elem, self.M.xyzs[0]):
+                        outfile.write("%-7s %13.7f %13.7f %13.7f\n" % (e, *c))
+                elif line == "$!constraint@here":
+                    if hasattr(self, "constraintStr"):
+                        outfile.write(self.constraintStr)
+                else:
+                    outfile.write(line)
+        return
+
+    def optimize_native(self):
+        assert self.temp_type == "optimize", "To use native optimization, the input file should have the optimize task in it"
+        self.constrainStr = "\nconstraints\n"
+        for d1, d2, d3, d4,v in self.dihedral_idx_values:
+            self.constraintStr += "  spring dihedral %d %d %d %d 0.5 %f\n"
+        if self.extra_constraints is not None:
+            _constraints = self.extra_constraints.split("\n")
+            for constraint in _constraints:
+                self.constraintStr += f"  {constrain} \n"
+        self.constraintStr += "end\n"
+        self.write_input("nwchem.nw")
+        self.run(r"srun --mpi=pmi2 -N $SLURM_NNODES -n $SLURM_NPROCS apptainer exec --bind /big_scratch $NWBIN nwchem.nw > nwchem.log", input_files=["nwchem.nw"], output_files=["nwchem.log"])
+        return
+
+    def optimize_geomeTRIC(self):
+        assert self.temp_type == "gradient", "To use geomeTRIC package, the input file should have the gradient task in it"
+        self.write_constraints_txt()
+        self.write_input("nwchem.nw")
+        cmd = "geometric-optimize --prefix tdrive --qccnv --reset --epsilon 0.0 --enforce 0.1 --qdata --nwchem nwchem.nw constraints.txt"
+        self.run(cmd, input_files=["nwchem.nw", "constraints.txt"], output_files=["tdrive.log", "tdrive.xyz", "qdata.xyz"])
+        return
+
+    def load_native_output(self, filename="nwchem.log"):
+        found_opt_result = False
+        final_energy, elems, coords = None, [], []
+        with open(filename) as outfile:
+            for line in outfile:
+                line = line.strip()
+                if (line.startswith("Optimization converged") or
+                    line.startswith("Failed to converge in")):
+                    for i in range(6): line = outfile.next()
+                    final_energy = float(line.split()[2])
+                elif final_energy is not None and line.startswith("Output coordinates"):
+                    found_opt_result = True
+                    for i in range(3): line = outfile.next()
+                elif found_opt_result:
+                    ls = line.split()
+                    if len(ls) == 6 and check_all_floats(ls[3:]):
+                        elems.append(ls[1])
+                        coords.append(ls[3:6])
+        if final_energy is None:
+            raise RuntimeError("Final energy not found in %s"%filename)
+        if len(elems) == 0 or len(coords) == 0:
+            raise RuntimeError("Final geometry not found in %s"%filename)
+        m = Molecule()
+        m.elem = elems
+        m.xyzs = [np.array(coords, dtype=float)]
+        m.qm_energies = [final_energy]
+        m.build_topology()
+        return m
+
 
 class EnginePsi4(QMEngine):
     def load_input(self, input_file):
