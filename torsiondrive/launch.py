@@ -134,7 +134,7 @@ def main():
     parser.add_argument('dihedralfile', type=str, help='File defining all dihedral angles to be scanned.')
     parser.add_argument('--init_coords', type=str, help='File contain a list of geometries, that will be used as multiple starting points, overwriting the geometry in input file.')
     parser.add_argument('-g', '--grid_spacing', type=int, nargs='*', default=[15], help='Grid spacing for dihedral scan, i.e. every 15 degrees, multiple values will be mapped to each dihedral angle')
-    parser.add_argument('-e', '--engine', type=str, default="psi4", choices=['qchem', 'psi4', 'terachem', 'openmm', "gaussian"], help='Engine for running scan')
+    parser.add_argument('-e', '--engine', type=str, default="psi4", choices=['qchem', 'psi4', 'terachem', 'openmm', "gaussian", "nwchem"], help='Engine for running scan')
     parser.add_argument('-c', '--constraints', type=str, default=None, help='Provide a constraints file in geomeTRIC format for additional freeze or set constraints (geomeTRIC or TeraChem only)')
     parser.add_argument('--native_opt', action='store_true', default=False, help='Use QM program native constrained optimization algorithm. This will turn off geomeTRIC package.')
     parser.add_argument('--energy_thresh', type=float, default=1e-5, help='Only activate grid points if the new optimization is <thre> lower than the previous lowest energy (in a.u.).')

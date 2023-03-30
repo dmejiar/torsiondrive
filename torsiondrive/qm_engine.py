@@ -3,7 +3,7 @@ import subprocess
 import numpy as np
 import copy
 from geometric.molecule import Molecule
-from torsiondrive.extra_constraints import build_geometric_constraint_string, build_terachem_constraint_string
+from torsiondrive.extra_constraints import build_geometric_constraint_string, build_terachem_constraint_string, build_nwchem_constraint_string
 
 def check_all_float(iterable):
     try:
@@ -193,7 +193,7 @@ class EngineNWChem(QMEngine):
         nwchem_temp = []
         with open(input_file) as nwchemin:
             for line in nwchemin:
-                line_sl = line.strup().lower()
+                line_sl = line.strip().lower()
                 if line_sl.startswith("geometry"):
                     reading_molecule = True
                     nwchem_temp.append(line)
@@ -231,6 +231,10 @@ class EngineNWChem(QMEngine):
         self.M.elem = elems
         self.M.xyzs = [np.array(coords, dtype=float)]
         self.M.build_topology()
+        self.slurm_nnodes = os.environ.get("SLURM_NNODES")
+        self.slurm_nprocs = os.environ.get("SLURM_NPROCS")
+        self.nwbin = os.environ.get("NWBIN")
+        self.cmd = os.environ.get("NWCHEM_COMMAND")
         return
 
     def write_input(self,filename="nwchem.nw"):
@@ -249,16 +253,21 @@ class EngineNWChem(QMEngine):
 
     def optimize_native(self):
         assert self.temp_type == "optimize", "To use native optimization, the input file should have the optimize task in it"
-        self.constrainStr = "\nconstraints\n"
-        for d1, d2, d3, d4,v in self.dihedral_idx_values:
-            self.constraintStr += "  spring dihedral %d %d %d %d 0.5 %f\n"
-        if self.extra_constraints is not None:
-            _constraints = self.extra_constraints.split("\n")
-            for constraint in _constraints:
-                self.constraintStr += f"  {constrain} \n"
-        self.constraintStr += "end\n"
+        if self.extra_constraints is None:
+            self.constraintStr = '\nconstraints\n'
+            for d1, d2, d3, d4, v in self.dihedral_idx_values:
+                self.constraintStr += f"spring dihedral {d1+1} {d2+1} {d3+1} {d4+1} 0.5 {float(v)}\n"
+            self.constraintStr += 'end\n'
+        else:
+            self.constraintStr = build_nwchem_constraint_string(self.extra_constraints, self.dihedral_idx_values)
         self.write_input("nwchem.nw")
-        self.run(r"srun --mpi=pmi2 -N $SLURM_NNODES -n $SLURM_NPROCS apptainer exec --bind /big_scratch $NWBIN nwchem.nw > nwchem.log", input_files=["nwchem.nw"], output_files=["nwchem.log"])
+
+        if self.cmd is None:
+            cmd = f"srun --mpi=pmi2 -N {self.slurm_nnodes} -n {self.slurm_nprocs} apptainer exec --bind /big_scratch {self.nwbin} nwchem nwchem.nw | tee nwchem.log"
+        else:
+            cmd = self.cmd + " nwchem.nw | tee nwchem.log"
+
+        self.run(cmd, input_files=["nwchem.nw"], output_files=["nwchem.log"])
         return
 
     def optimize_geomeTRIC(self):
@@ -277,16 +286,19 @@ class EngineNWChem(QMEngine):
                 line = line.strip()
                 if (line.startswith("Optimization converged") or
                     line.startswith("Failed to converge in")):
-                    for i in range(6): line = outfile.next()
+                    for i in range(6): line = next(outfile)
                     final_energy = float(line.split()[2])
                 elif final_energy is not None and line.startswith("Output coordinates"):
                     found_opt_result = True
-                    for i in range(3): line = outfile.next()
+                    for i in range(3): line = next(outfile)
                 elif found_opt_result:
                     ls = line.split()
-                    if len(ls) == 6 and check_all_floats(ls[3:]):
+                    if len(ls) == 6 and check_all_float(ls[3:]):
                         elems.append(ls[1])
                         coords.append(ls[3:6])
+                    elif len(ls) == 0:
+                        break
+                    
         if final_energy is None:
             raise RuntimeError("Final energy not found in %s"%filename)
         if len(elems) == 0 or len(coords) == 0:

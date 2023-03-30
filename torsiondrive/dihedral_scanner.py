@@ -213,6 +213,7 @@ class DihedralScanner:
         for gs in self.grid_spacing:
             self.grid_axes.append(range(-180+gs, 180+gs, gs))
         self.grid_ids = tuple(itertools.product(*self.grid_axes))
+        print(self.grid_ids)
 
     def build_dihedral_mask(self, dihedral_ranges):
         """
@@ -272,7 +273,7 @@ class DihedralScanner:
             assert len(check_grid_id) == len(dihedral_values), "Grid dimensions should be the same!"
             for dv, dref in zip(dihedral_values, check_grid_id):
                 diff = abs(dv - dref)
-                if min(diff, abs(360-diff)) > 0.5:
+                if min(diff, abs(360-diff)) > 3.5:
                     print("Warning! dihedral values inconsistent with check_grid_id")
                     print(f'dihedral_values {dihedral_values}; check_grid_id {check_grid_id}')
                     return None

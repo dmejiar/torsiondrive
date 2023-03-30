@@ -151,6 +151,33 @@ def build_geometric_constraint_string(constraints_dict, dihedral_idx_values=None
             constraints_string += f"dihedral {d1+1} {d2+1} {d3+1} {d4+1} {float(v)}\n"
     return constraints_string
 
+def build_nwchem_constraint_string(constraints_dict, dihedral_idx_values=None):
+    constraints_string = "\n"
+    spec_list = constraints_dict.get('set',[])
+    set_section_open = False
+    if len(spec_list) > 0:
+        set_section_open = True
+        constraints_string += "constraints\n"
+        for spec_dict in spec_list:
+            ctype, indices, value = spec_dict['type'], spec_dict['indices'], spec_dict['value']
+            # NWChem only take "bond" keyword
+            if ctype == 'distance': ctype = 'bond'
+            constraints_string += f'spring {ctype} ' + ' '.join(map(str, [i+1 for i in indices])) + f' 0.5 {float(value)}\n'
+    if dihedral_idx_values is not None:
+        if set_section_open is False:
+            # write the $set head if not written yet
+            constraints_string += 'constraints\n'
+            set_section_open = True
+        for d1, d2, d3, d4, v in dihedral_idx_values:
+            if abs(float(v)) == 180.0:
+                _v = float(v) - 1.5*float(v)/abs(float(v))
+            else:
+                _v = v
+            constraints_string += f"spring dihedral {d1+1} {d2+1} {d3+1} {d4+1} 0.5 {float(v)}\n"
+    if set_section_open is True:
+        constraints_string += 'end\n\n'
+    return constraints_string
+
 def build_terachem_constraint_string(constraints_dict, dihedral_idx_values=None):
     """
     Build the TeraChem constraint string with constraints_dict and a set of dihedral_idx_values
