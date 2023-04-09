@@ -208,13 +208,13 @@ class EngineNWChem(QMEngine):
                     else:
                         nwchem_temp.append(line)
                         if line_sl.startswith("zcoord"):
+                            nwchem_temp.append("$!constraint@here")
                             zcoord = True
                         if line_sl.startswith("end"):
                             if zcoord:
                                 zcoord = False
                             else:
                                 reading_molecule = False
-                                nwchem_temp.append("$!constraint@here")
                 else:
                     nwchem_temp.append(line)
                 if "gradient" in line_sl:
@@ -254,10 +254,9 @@ class EngineNWChem(QMEngine):
     def optimize_native(self):
         assert self.temp_type == "optimize", "To use native optimization, the input file should have the optimize task in it"
         if self.extra_constraints is None:
-            self.constraintStr = '\nconstraints\n'
+            self.constraintStr = ''
             for d1, d2, d3, d4, v in self.dihedral_idx_values:
-                self.constraintStr += f"spring dihedral {d1+1} {d2+1} {d3+1} {d4+1} 0.5 {float(v)}\n"
-            self.constraintStr += 'end\n'
+                self.constraintStr += f" torsion {d1+1} {d2+1} {d3+1} {d4+1} {float(v)} constant\n"
         else:
             self.constraintStr = build_nwchem_constraint_string(self.extra_constraints, self.dihedral_idx_values)
         self.write_input("nwchem.nw")
